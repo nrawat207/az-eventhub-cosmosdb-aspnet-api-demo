@@ -1,0 +1,207 @@
+# Azure DevOps Pipeline
+# Alternative to GitHub Actions for CI/CD automation
+# Uncomment and configure if using Azure DevOps instead of GitHub
+
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  buildConfiguration: 'Release'
+  dotnetVersion: '10.0.x'
+  resourceGroup: 'rg-eventhub-cosmosdb-dev'
+  location: 'eastus'
+
+stages:
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      - job: BuildTest
+        displayName: 'Build and Test'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Use .NET $(dotnetVersion)'
+            inputs:
+              version: '$(dotnetVersion)'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore NuGet packages'
+            inputs:
+              command: 'restore'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build solution'
+            inputs:
+              command: 'build'
+              arguments: '--configuration $(buildConfiguration) /p:TreatWarningsAsErrors=true'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Run unit tests'
+            inputs:
+              command: 'test'
+              arguments: '--configuration $(buildConfiguration) --no-build /p:CollectCoverage=true /p:CoverageFormat=cobertura'
+              publishTestResults: true
+
+  - stage: ValidateInfra
+    displayName: 'Validate Infrastructure'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: LintBicep
+        displayName: 'Lint Bicep Templates'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Build Bicep files'
+            inputs:
+              azureSubscription: 'AzureResourceManagerConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az bicep build --file infra/main.bicep
+                echo "✅ Bicep files validated"
+
+          - task: AzureCLI@2
+            displayName: 'Run what-if analysis'
+            inputs:
+              azureSubscription: 'AzureResourceManagerConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment group what-if \
+                  --resource-group $(resourceGroup) \
+                  --template-file infra/main.bicep \
+                  --parameters infra/parameters/dev.bicepparam \
+                  --no-pretty-print > $(Build.ArtifactStagingDirectory)/whatif.txt
+                
+                echo "What-if analysis completed. Review output for changes."
+                cat $(Build.ArtifactStagingDirectory)/whatif.txt
+
+  - stage: BuildImages
+    displayName: 'Build & Push Docker Images'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: BuildPushImages
+        displayName: 'Build and Push to ACR'
+        steps:
+          - task: Docker@2
+            displayName: 'Build and push BatchProcessor image'
+            inputs:
+              command: 'buildAndPush'
+              repository: '$(acrName)/batch-processor-api'
+              Dockerfile: 'src/BatchProcessor.Api/Dockerfile'
+              containerRegistry: '$(acrConnection)'
+              tags: |
+                $(Build.SourceVersion)
+                dev-latest
+
+          - task: Docker@2
+            displayName: 'Build and push ProgressReceiver image'
+            inputs:
+              command: 'buildAndPush'
+              repository: '$(acrName)/progress-receiver-api'
+              Dockerfile: 'src/ProgressReceiver.Api/Dockerfile'
+              containerRegistry: '$(acrConnection)'
+              tags: |
+                $(Build.SourceVersion)
+                dev-latest
+
+  - stage: DeployInfra
+    displayName: 'Deploy Infrastructure'
+    dependsOn: ValidateInfra
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployBicep
+        displayName: 'Deploy Bicep Templates'
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Deploy Bicep to Azure'
+                  inputs:
+                    azureSubscription: 'AzureResourceManagerConnection'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az deployment group create \
+                        --name "deploy-$(Build.BuildId)" \
+                        --resource-group $(resourceGroup) \
+                        --template-file infra/main.bicep \
+                        --parameters infra/parameters/dev.bicepparam
+                      
+                      echo "Infrastructure deployment completed"
+
+  - stage: DeployApps
+    displayName: 'Deploy Applications'
+    dependsOn:
+      - DeployInfra
+      - BuildImages
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: UpdateContainerApps
+        displayName: 'Update ACA Apps'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Update BatchProcessor.Api in ACA'
+            inputs:
+              azureSubscription: 'AzureResourceManagerConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                IMAGE_URI=$(acrLoginServer)/batch-processor-api:$(Build.SourceVersion)
+                
+                az containerapp update \
+                  --name batch-processor-api \
+                  --resource-group $(resourceGroup) \
+                  --image $IMAGE_URI
+
+                echo "BatchProcessor.Api updated to $IMAGE_URI"
+
+          - task: AzureCLI@2
+            displayName: 'Update ProgressReceiver.Api in ACA'
+            inputs:
+              azureSubscription: 'AzureResourceManagerConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                IMAGE_URI=$(acrLoginServer)/progress-receiver-api:$(Build.SourceVersion)
+                
+                az containerapp update \
+                  --name progress-receiver-api \
+                  --resource-group $(resourceGroup) \
+                  --image $IMAGE_URI
+
+                echo "ProgressReceiver.Api updated to $IMAGE_URI"
+
+          - task: AzureCLI@2
+            displayName: 'Verify deployments'
+            inputs:
+              azureSubscription: 'AzureResourceManagerConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Checking deployment status..."
+                az containerapp show \
+                  --name batch-processor-api \
+                  --resource-group $(resourceGroup) \
+                  --query "properties.provisioningState" -o tsv
+                
+                az containerapp show \
+                  --name progress-receiver-api \
+                  --resource-group $(resourceGroup) \
+                  --query "properties.provisioningState" -o tsv
+
+# Service connections required (configure in Azure DevOps):
+# - AzureResourceManagerConnection: Service Principal with Contributor access
+# - acrConnection: Container Registry connection (for Docker@2 task)
+
+# Environment variables required:
+# - acrName: Name of Azure Container Registry (e.g., azlearnacrdev)
+# - acrLoginServer: Login server of ACR (e.g., azlearnacrdev.azurecr.io)

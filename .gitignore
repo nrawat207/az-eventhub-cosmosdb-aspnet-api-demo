@@ -1,0 +1,83 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio cache/options
+.vs/
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+
+# Rider
+.idea/
+*.sln.iml
+*.iml
+
+# Visual Studio Code
+.vscode/extensions.json
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+.nuget/packages/
+.nuget/NuGet.Config
+.nuget/NuGet.exe
+packages/
+
+# Local environment variables
+.env
+.env.local
+*.local.json
+appsettings.*.local.json
+
+# Test Results
+TestResults/
+*.trx
+*.coverage
+
+# Azure DevOps
+.azure/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bicep cache
+.bicep/
+
+# Azure CLI cache
+.azure/
+
+# Node (frontend)
+node_modules/
+dist/
+.next/
+out/
+
+# CosmosDB Emulator
+/CosmosDbEmulator.log

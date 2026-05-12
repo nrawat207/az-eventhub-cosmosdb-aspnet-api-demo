@@ -1,0 +1,6 @@
+@ProgressReceiver.Api_HostAddress = http://localhost:5160
+
+GET {{ProgressReceiver.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
