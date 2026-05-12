@@ -80,3 +80,5 @@ string? GetOptionalConfigurationValue(string key)
 
     return !string.IsNullOrWhiteSpace(value) ? value : null;
 }
+
+public partial class Program;
