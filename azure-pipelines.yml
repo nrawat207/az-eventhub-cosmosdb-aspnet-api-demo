@@ -10,32 +10,22 @@ pool:
 variables:
   DOTNET_VERSION: '10.0.x'
   REGISTRY_LOGIN_SERVER: '$(ACR_NAME_DEV).azurecr.io'
+  ACR_DOCKER_REGISTRY_SERVICE_CONNECTION: 'ACRServiceConnection'
   IMAGE_TAG: '$(Build.SourceVersion)'
+  IMAGE_TAG_DEV: 'dev'
   IMAGE_TAG_LATEST: 'dev-latest'
   buildConfiguration: 'Release'
 
-# ============================================================================
-# REQUIRED VARIABLES (set in Azure DevOps Pipeline Settings)
-# ============================================================================
-# Pipeline Variables (Project Settings > Pipelines > Library):
-#   - AZURE_CLIENT_ID: Service Principal Client ID
-#   - AZURE_TENANT_ID: Azure AD Tenant ID
-#   - AZURE_SUBSCRIPTION_ID: Target subscription
-#   - AZURE_RESOURCE_GROUP_DEV: Dev resource group name
-#   - ACR_NAME_DEV: Container Registry name
-#   - ACA_BATCH_APP_NAME: Batch Processor app name
-#   - ACA_RECEIVER_APP_NAME: Progress Receiver app name
-#   - AZURE_DEVOPS_SERVICE_CONNECTION: Name of service connection to Azure
-#
-# Service Connection:
-#   - Create a Service Connection to Azure (Project Settings > Service connections)
-#   - Use Workload Identity Federation or Managed Identity (no secrets)
-#   - Name it "AzureServiceConnection" or reference in steps
+# Required pipeline/library variables:
+# - AZURE_SUBSCRIPTION_ID
+# - AZURE_RESOURCE_GROUP_DEV
+# - ACR_NAME_DEV
+# - ACA_BATCH_APP_NAME
+# - ACA_RECEIVER_APP_NAME
+# - AZURE_DEVOPS_SERVICE_CONNECTION
+# - ACR_DOCKER_REGISTRY_SERVICE_CONNECTION, optional override for the default above
 
 stages:
-  # ============================================================================
-  # STAGE 1: BUILD & TEST (Runs regardless of trigger)
-  # ============================================================================
   - stage: Build_And_Test
     displayName: 'Build & Test'
     jobs:
@@ -45,30 +35,27 @@ stages:
           - task: UseDotNet@2
             displayName: 'Install .NET $(DOTNET_VERSION)'
             inputs:
-              version: $(DOTNET_VERSION)
+              version: '$(DOTNET_VERSION)'
 
           - task: DotNetCoreCLI@2
             displayName: 'Restore NuGet packages'
             inputs:
               command: 'restore'
+              projects: '**/*.sln'
 
           - task: DotNetCoreCLI@2
-            displayName: 'Build solution (warnings as errors)'
+            displayName: 'Build solution'
             inputs:
               command: 'build'
+              projects: '**/*.sln'
               arguments: '--configuration $(buildConfiguration) --no-restore -p:TreatWarningsAsErrors=true'
 
           - task: DotNetCoreCLI@2
             displayName: 'Run unit tests with coverage'
             inputs:
               command: 'test'
-              arguments: |
-                --configuration $(buildConfiguration) \
-                --no-build \
-                --logger trx \
-                --collect:"XPlat Code Coverage" \
-                --results-directory $(Agent.TempDirectory)/TestResults \
-                -- RunConfiguration.DisableAppDomain=true
+              projects: 'tests/**/*.csproj'
+              arguments: '--configuration $(buildConfiguration) --no-build --logger trx --collect:"XPlat Code Coverage" --results-directory $(Agent.TempDirectory)/TestResults -- RunConfiguration.DisableAppDomain=true'
 
           - task: PublishTestResults@2
             displayName: 'Publish test results'
@@ -83,12 +70,9 @@ stages:
             displayName: 'Publish code coverage'
             condition: always()
             inputs:
-              codeCoverageTool: Cobertura
+              codeCoverageTool: 'Cobertura'
               summaryFileLocation: '$(Agent.TempDirectory)/TestResults/**/coverage.cobertura.xml'
 
-  # ============================================================================
-  # STAGE 2: LINT BICEP (Runs in parallel with build-and-test)
-  # ============================================================================
   - stage: Lint_Bicep
     displayName: 'Lint Bicep & Validate'
     dependsOn: []
@@ -97,15 +81,15 @@ stages:
         displayName: 'Validate Bicep files'
         steps:
           - task: AzureCLI@2
-            displayName: 'Build all Bicep modules'
+            displayName: 'Build Bicep template'
             inputs:
               azureSubscription: '$(AZURE_DEVOPS_SERVICE_CONNECTION)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Building all Bicep modules..."
+                set -euo pipefail
                 az bicep build --file infra/main.bicep
-                echo "✓ All Bicep files compiled successfully"
+                echo "All Bicep files compiled successfully"
 
           - task: AzureCLI@2
             displayName: 'Run Bicep what-if deployment check'
@@ -114,16 +98,15 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                set -euo pipefail
+                az account set --subscription "$(AZURE_SUBSCRIPTION_ID)"
                 az deployment group what-if \
-                  --resource-group $(AZURE_RESOURCE_GROUP_DEV) \
+                  --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
                   --template-file infra/main.bicep \
                   --parameters infra/parameters/dev.bicepparam \
-                  --no-pretty-print || true
-                echo "✓ What-if deployment validation completed"
+                  --no-pretty-print
+                echo "What-if deployment validation completed"
 
-  # ============================================================================
-  # STAGE 3: BUILD & PUSH DOCKER IMAGES (only on main branch)
-  # ============================================================================
   - stage: Build_And_Push_Images
     displayName: 'Build & Push Docker Images'
     dependsOn: Build_And_Test
@@ -137,9 +120,10 @@ stages:
             inputs:
               command: 'buildAndPush'
               Dockerfile: 'src/BatchProcessor.Api/Dockerfile'
-              repository: '$(REGISTRY_LOGIN_SERVER)/batch-processor'
+              repository: 'batchprocessor-api'
               tags: |
                 $(IMAGE_TAG)
+                $(IMAGE_TAG_DEV)
                 $(IMAGE_TAG_LATEST)
               containerRegistry: '$(ACR_DOCKER_REGISTRY_SERVICE_CONNECTION)'
               addPipelineData: true
@@ -149,59 +133,53 @@ stages:
             inputs:
               command: 'buildAndPush'
               Dockerfile: 'src/ProgressReceiver.Api/Dockerfile'
-              repository: '$(REGISTRY_LOGIN_SERVER)/progress-receiver'
+              repository: 'progressreceiver-api'
               tags: |
                 $(IMAGE_TAG)
+                $(IMAGE_TAG_DEV)
                 $(IMAGE_TAG_LATEST)
               containerRegistry: '$(ACR_DOCKER_REGISTRY_SERVICE_CONNECTION)'
               addPipelineData: true
 
           - script: |
               echo "Images built and pushed:"
-              echo "  - $(REGISTRY_LOGIN_SERVER)/batch-processor:$(IMAGE_TAG)"
-              echo "  - $(REGISTRY_LOGIN_SERVER)/progress-receiver:$(IMAGE_TAG)"
+              echo "  - $(REGISTRY_LOGIN_SERVER)/batchprocessor-api:$(IMAGE_TAG)"
+              echo "  - $(REGISTRY_LOGIN_SERVER)/batchprocessor-api:$(IMAGE_TAG_DEV)"
+              echo "  - $(REGISTRY_LOGIN_SERVER)/progressreceiver-api:$(IMAGE_TAG)"
+              echo "  - $(REGISTRY_LOGIN_SERVER)/progressreceiver-api:$(IMAGE_TAG_DEV)"
             displayName: 'Log image details'
 
-  # ============================================================================
-  # STAGE 4: DEPLOY INFRASTRUCTURE (only on main branch)
-  # ============================================================================
   - stage: Deploy_Infrastructure
     displayName: 'Deploy Infrastructure'
-    dependsOn: Lint_Bicep
+    dependsOn:
+      - Build_And_Test
+      - Lint_Bicep
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
     jobs:
       - job: DeployInfra
         displayName: 'Deploy Bicep infrastructure'
         steps:
-          - task: AzureResourceManagerTemplateDeployment@3
-            displayName: 'Deploy via ARM/Bicep'
+          - task: AzureCLI@2
+            displayName: 'Deploy Bicep infrastructure'
             inputs:
-              deploymentScope: 'Resource Group'
-              azureResourceManagerConnection: '$(AZURE_DEVOPS_SERVICE_CONNECTION)'
-              subscriptionId: '$(AZURE_SUBSCRIPTION_ID)'
-              action: 'Create Or Update Resource Group'
-              resourceGroupName: '$(AZURE_RESOURCE_GROUP_DEV)'
-              location: 'eastus'
-              templateLocation: 'Linked artifact'
-              csmFile: 'infra/main.bicep'
-              csmParametersFile: 'infra/parameters/dev.bicepparam'
-              deploymentMode: 'Incremental'
-              deploymentName: 'bicep-deployment-$(Build.BuildId)'
-              outputs: 'deploymentOutputs'
+              azureSubscription: '$(AZURE_DEVOPS_SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                az account set --subscription "$(AZURE_SUBSCRIPTION_ID)"
+                az deployment group create \
+                  --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
+                  --template-file infra/main.bicep \
+                  --parameters infra/parameters/dev.bicepparam \
+                  --name "bicep-deployment-$(Build.BuildId)"
 
-          - script: |
-              echo "✓ Infrastructure deployed successfully"
-              az resource list \
-                --resource-group $(AZURE_RESOURCE_GROUP_DEV) \
-                --query "[].{Name:name, Type:type}" \
-                --output table
-            displayName: 'List deployed resources'
-            env:
-              AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
+                echo "Infrastructure deployed successfully"
+                az resource list \
+                  --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
+                  --query "[].{Name:name, Type:type}" \
+                  --output table
 
-  # ============================================================================
-  # STAGE 5: DEPLOY CONTAINER APPS (only on main branch)
-  # ============================================================================
   - stage: Deploy_Apps
     displayName: 'Deploy to Container Apps'
     dependsOn:
@@ -219,11 +197,12 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Updating BatchProcessor.Api image to $(IMAGE_TAG)..."
+                set -euo pipefail
+                az account set --subscription "$(AZURE_SUBSCRIPTION_ID)"
                 az containerapp update \
-                  --name $(ACA_BATCH_APP_NAME) \
-                  --resource-group $(AZURE_RESOURCE_GROUP_DEV) \
-                  --image $(REGISTRY_LOGIN_SERVER)/batch-processor:$(IMAGE_TAG)
+                  --name "$(ACA_BATCH_APP_NAME)" \
+                  --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
+                  --image "$(REGISTRY_LOGIN_SERVER)/batchprocessor-api:$(IMAGE_TAG)"
 
           - task: AzureCLI@2
             displayName: 'Update ProgressReceiver.Api image'
@@ -232,11 +211,12 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Updating ProgressReceiver.Api image to $(IMAGE_TAG)..."
+                set -euo pipefail
+                az account set --subscription "$(AZURE_SUBSCRIPTION_ID)"
                 az containerapp update \
-                  --name $(ACA_RECEIVER_APP_NAME) \
-                  --resource-group $(AZURE_RESOURCE_GROUP_DEV) \
-                  --image $(REGISTRY_LOGIN_SERVER)/progress-receiver:$(IMAGE_TAG)
+                  --name "$(ACA_RECEIVER_APP_NAME)" \
+                  --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
+                  --image "$(REGISTRY_LOGIN_SERVER)/progressreceiver-api:$(IMAGE_TAG)"
 
           - task: AzureCLI@2
             displayName: 'Wait for BatchProcessor.Api to be healthy'
@@ -245,31 +225,30 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Waiting for BatchProcessor.Api revision to be healthy..."
+                set -euo pipefail
+                az account set --subscription "$(AZURE_SUBSCRIPTION_ID)"
                 max_attempts=30
                 attempt=0
-                while [ $attempt -lt $max_attempts ]; do
-                  status=$(az containerapp revision show \
-                    --name $(ACA_BATCH_APP_NAME) \
-                    --resource-group $(AZURE_RESOURCE_GROUP_DEV) \
-                    --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
-                  
-                  if [ "$status" == "Succeeded" ]; then
-                    echo "✓ BatchProcessor.Api revision is healthy"
-                    break
+
+                while [ "$attempt" -lt "$max_attempts" ]; do
+                  status=$(az containerapp show \
+                    --name "$(ACA_BATCH_APP_NAME)" \
+                    --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
+                    --query "properties.provisioningState" \
+                    --output tsv 2>/dev/null || echo "Unknown")
+
+                  if [ "$status" = "Succeeded" ]; then
+                    echo "BatchProcessor.Api is healthy"
+                    exit 0
                   fi
-                  
+
                   attempt=$((attempt + 1))
-                  if [ $attempt -lt $max_attempts ]; then
-                    echo "  Status: $status (attempt $attempt/$max_attempts), waiting..."
-                    sleep 10
-                  fi
+                  echo "Status: $status (attempt $attempt/$max_attempts), waiting..."
+                  sleep 10
                 done
-                
-                if [ $attempt -eq $max_attempts ]; then
-                  echo "⚠ BatchProcessor.Api did not reach healthy state within timeout"
-                  exit 1
-                fi
+
+                echo "BatchProcessor.Api did not reach a healthy state within timeout"
+                exit 1
 
           - task: AzureCLI@2
             displayName: 'Wait for ProgressReceiver.Api to be healthy'
@@ -278,47 +257,49 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Waiting for ProgressReceiver.Api revision to be healthy..."
+                set -euo pipefail
+                az account set --subscription "$(AZURE_SUBSCRIPTION_ID)"
                 max_attempts=30
                 attempt=0
-                while [ $attempt -lt $max_attempts ]; do
-                  status=$(az containerapp revision show \
-                    --name $(ACA_RECEIVER_APP_NAME) \
-                    --resource-group $(AZURE_RESOURCE_GROUP_DEV) \
-                    --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
-                  
-                  if [ "$status" == "Succeeded" ]; then
-                    echo "✓ ProgressReceiver.Api revision is healthy"
-                    break
+
+                while [ "$attempt" -lt "$max_attempts" ]; do
+                  status=$(az containerapp show \
+                    --name "$(ACA_RECEIVER_APP_NAME)" \
+                    --resource-group "$(AZURE_RESOURCE_GROUP_DEV)" \
+                    --query "properties.provisioningState" \
+                    --output tsv 2>/dev/null || echo "Unknown")
+
+                  if [ "$status" = "Succeeded" ]; then
+                    echo "ProgressReceiver.Api is healthy"
+                    exit 0
                   fi
-                  
+
                   attempt=$((attempt + 1))
-                  if [ $attempt -lt $max_attempts ]; then
-                    echo "  Status: $status (attempt $attempt/$max_attempts), waiting..."
-                    sleep 10
-                  fi
+                  echo "Status: $status (attempt $attempt/$max_attempts), waiting..."
+                  sleep 10
                 done
-                
-                if [ $attempt -eq $max_attempts ]; then
-                  echo "⚠ ProgressReceiver.Api did not reach healthy state within timeout"
-                  exit 1
-                fi
+
+                echo "ProgressReceiver.Api did not reach a healthy state within timeout"
+                exit 1
 
           - script: |
-              echo "## 🚀 Deployment Summary" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "**Environment:** Dev" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "**Build:** $(Build.BuildNumber)" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "**Commit:** $(Build.SourceVersion)" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "### Deployed Components" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "- ✅ Infrastructure (Bicep)" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "- ✅ BatchProcessor.Api (Image: $(IMAGE_TAG))" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "- ✅ ProgressReceiver.Api (Image: $(IMAGE_TAG))" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "### Resources" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "- Resource Group: \`$(AZURE_RESOURCE_GROUP_DEV)\`" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
-              echo "- Registry: \`$(REGISTRY_LOGIN_SERVER)\`" >> $(Build.ArtifactStagingDirectory)/deployment-summary.md
+              mkdir -p "$(Build.ArtifactStagingDirectory)"
+              {
+                echo "## Deployment Summary"
+                echo ""
+                echo "**Environment:** Dev"
+                echo "**Build:** $(Build.BuildNumber)"
+                echo "**Commit:** $(Build.SourceVersion)"
+                echo ""
+                echo "### Deployed Components"
+                echo "- Infrastructure (Bicep)"
+                echo "- BatchProcessor.Api (Image: $(IMAGE_TAG))"
+                echo "- ProgressReceiver.Api (Image: $(IMAGE_TAG))"
+                echo ""
+                echo "### Resources"
+                echo "- Resource Group: \`$(AZURE_RESOURCE_GROUP_DEV)\`"
+                echo "- Registry: \`$(REGISTRY_LOGIN_SERVER)\`"
+              } > "$(Build.ArtifactStagingDirectory)/deployment-summary.md"
             displayName: 'Create deployment summary'
 
           - task: PublishBuildArtifacts@1
@@ -327,48 +308,3 @@ stages:
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
               ArtifactName: 'deployment-summary'
-
-# ============================================================================
-# ENVIRONMENT PROTECTION RULES (for future higher environments)
-# ============================================================================
-#
-# To set up approval gates for staging/prod promotion:
-#
-# 1. Create Environments in Azure DevOps:
-#    - Project Settings > Environments > Create Environment
-#    - Name: 'staging' or 'prod'
-#
-# 2. Add Approvals & Checks:
-#    - Click on environment > Approvals and checks
-#    - Add "Approval": select users/groups who must approve
-#    - Add "Conditional": specify conditions (branch, etc.)
-#    - Add "Business hours": restrict deployments to business hours (optional)
-#
-# 3. Configure pipeline to use environment:
-#    - In your deploy stage, add:
-#    
-#    - deployment: DeployProd
-#      displayName: 'Deploy to Production'
-#      environment: 'prod'
-#      strategy:
-#        runOnce:
-#          deploy:
-#            steps:
-#              - task: AzureCLI@2
-#                displayName: 'Deploy to prod'
-#                inputs:
-#                  azureSubscription: '$(AZURE_DEVOPS_SERVICE_CONNECTION)'
-#                  scriptType: 'bash'
-#                  scriptLocation: 'inlineScript'
-#                  inlineScript: |
-#                    # Your deployment steps here
-#
-# This ensures humans review deployments to critical environments before execution.
-
-# Service connections required (configure in Azure DevOps):
-# - AzureResourceManagerConnection: Service Principal with Contributor access
-# - acrConnection: Container Registry connection (for Docker@2 task)
-
-# Environment variables required:
-# - acrName: Name of Azure Container Registry (e.g., azlearnacrdev)
-# - acrLoginServer: Login server of ACR (e.g., azlearnacrdev.azurecr.io)
