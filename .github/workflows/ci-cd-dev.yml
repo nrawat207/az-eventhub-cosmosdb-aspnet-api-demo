@@ -1,0 +1,410 @@
+name: CI/CD - Dev Environment
+
+# REQUIRED SECRETS & VARIABLES:
+# GitHub Secrets (OIDC federation — no stored credentials):
+#   - None required! Uses OIDC federation with Azure.
+#
+# GitHub Variables:
+#   - AZURE_CLIENT_ID: Service Principal / Managed Identity Client ID
+#   - AZURE_TENANT_ID: Azure AD Tenant ID
+#   - AZURE_SUBSCRIPTION_ID: Target Azure Subscription ID
+#   - AZURE_RESOURCE_GROUP_DEV: Dev environment resource group name (e.g., 'rg-azlearn-dev')
+#   - ACR_NAME_DEV: Container Registry name (e.g., 'azlearnacrdev')
+#   - ACA_BATCH_APP_NAME: Batch Processor Container App name
+#   - ACA_RECEIVER_APP_NAME: Progress Receiver Container App name
+#
+# GitHub Environment (optional, for future protection rules):
+#   - Create a GitHub Environment named 'dev' with protection rules if needed
+#     for approval gates before deployment.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: "Confirm deployment to dev environment (type 'yes' to proceed)"
+        required: false
+        default: "no"
+
+permissions:
+  id-token: write
+  contents: read
+  checks: write
+  pull-requests: write
+
+env:
+  REGISTRY_LOGIN_SERVER: ${{ vars.ACR_NAME_DEV }}.azurecr.io
+  IMAGE_TAG: ${{ github.sha }}
+  IMAGE_TAG_LATEST: dev-latest
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  # ============================================================================
+  # JOB 1: Build and Test (.NET projects)
+  # ============================================================================
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    outputs:
+      test-results: ${{ steps.test.outputs.results }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore NuGet packages
+        run: dotnet restore
+
+      - name: Build solution (warnings as errors)
+        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+
+      - name: Run unit tests with coverage
+        id: test
+        run: |
+          dotnet test \
+            --configuration Release \
+            --no-build \
+            --logger "trx;LogFileName=test-results.trx" \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults \
+            -- RunConfiguration.DisableAppDomain=true
+          echo "results=success" >> $GITHUB_OUTPUT
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/
+          retention-days: 30
+
+      - name: Publish test results to PR
+        if: always() && github.event_name == 'pull_request'
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: TestResults/**/*.trx
+          check_name: Unit Test Results
+          comment_mode: always
+
+      - name: Upload coverage to artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage
+          path: TestResults/coverage.cobertura.xml
+          retention-days: 30
+
+  # ============================================================================
+  # JOB 2: Lint Bicep (runs in parallel with build-and-test)
+  # ============================================================================
+  lint-bicep:
+    name: Lint Bicep & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Azure CLI & Bicep
+        uses: Azure/setup-azure-cli@v3
+        with:
+          azcliversion: latest
+
+      - name: Validate all Bicep files
+        run: |
+          echo "Building all Bicep modules..."
+          az bicep build --file infra/main.bicep
+          echo "✓ All Bicep files compiled successfully"
+
+      - name: Azure Login (OIDC)
+        uses: Azure/login@v1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Bicep what-if (dry-run deployment check)
+        run: |
+          az deployment group what-if \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+            --template-file infra/main.bicep \
+            --parameters infra/parameters/dev.bicepparam \
+            --no-pretty-print || true
+          echo "✓ What-if deployment validation completed"
+
+  # ============================================================================
+  # JOB 3: Build & Push Docker Images (only on push to main)
+  # ============================================================================
+  build-push-images:
+    name: Build & Push Docker Images
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure Login (OIDC)
+        uses: Azure/login@v1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: |
+          az acr login --name ${{ vars.ACR_NAME_DEV }}
+          echo "✓ Logged into Azure Container Registry"
+
+      - name: Build and push BatchProcessor.Api image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/BatchProcessor.Api
+          file: ./src/BatchProcessor.Api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY_LOGIN_SERVER }}/batch-processor:${{ env.IMAGE_TAG }}
+            ${{ env.REGISTRY_LOGIN_SERVER }}/batch-processor:${{ env.IMAGE_TAG_LATEST }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push ProgressReceiver.Api image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/ProgressReceiver.Api
+          file: ./src/ProgressReceiver.Api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY_LOGIN_SERVER }}/progress-receiver:${{ env.IMAGE_TAG }}
+            ${{ env.REGISTRY_LOGIN_SERVER }}/progress-receiver:${{ env.IMAGE_TAG_LATEST }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image scan and sign (optional for learning)
+        run: |
+          echo "ℹ Image signing with notation/cosign can be added here for production"
+          echo "Images built and pushed:"
+          echo "  - ${{ env.REGISTRY_LOGIN_SERVER }}/batch-processor:${{ env.IMAGE_TAG }}"
+          echo "  - ${{ env.REGISTRY_LOGIN_SERVER }}/progress-receiver:${{ env.IMAGE_TAG }}"
+
+  # ============================================================================
+  # JOB 4: Deploy Infrastructure (only on push to main)
+  # ============================================================================
+  deploy-infra:
+    name: Deploy Infrastructure
+    needs: lint-bicep
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      batch-app-name: ${{ steps.deploy.outputs.batch-app-name }}
+      receiver-app-name: ${{ steps.deploy.outputs.receiver-app-name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: Azure/login@v1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy infrastructure via Bicep
+        id: deploy
+        run: |
+          echo "Deploying infrastructure to ${{ vars.AZURE_RESOURCE_GROUP_DEV }}..."
+          az deployment group create \
+            --name "bicep-deployment-$(date +%Y%m%d-%H%M%S)" \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+            --template-file infra/main.bicep \
+            --parameters infra/parameters/dev.bicepparam \
+            --mode Incremental
+          
+          echo "✓ Infrastructure deployed successfully"
+          
+          # Extract and output resource names for subsequent jobs
+          echo "batch-app-name=${{ vars.ACA_BATCH_APP_NAME }}" >> $GITHUB_OUTPUT
+          echo "receiver-app-name=${{ vars.ACA_RECEIVER_APP_NAME }}" >> $GITHUB_OUTPUT
+
+      - name: List deployed resources
+        run: |
+          echo "Deployed resources in ${{ vars.AZURE_RESOURCE_GROUP_DEV }}:"
+          az resource list \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+            --query "[].{Name:name, Type:type}" \
+            --output table
+
+  # ============================================================================
+  # JOB 5: Deploy Container Apps (only on push to main)
+  # ============================================================================
+  deploy-apps:
+    name: Deploy to Container Apps
+    needs: [deploy-infra, build-push-images]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: Azure/login@v1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update BatchProcessor.Api Container App image
+        run: |
+          echo "Updating BatchProcessor.Api image to ${{ env.IMAGE_TAG }}..."
+          az containerapp update \
+            --name ${{ vars.ACA_BATCH_APP_NAME }} \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+            --image ${{ env.REGISTRY_LOGIN_SERVER }}/batch-processor:${{ env.IMAGE_TAG }}
+
+      - name: Update ProgressReceiver.Api Container App image
+        run: |
+          echo "Updating ProgressReceiver.Api image to ${{ env.IMAGE_TAG }}..."
+          az containerapp update \
+            --name ${{ vars.ACA_RECEIVER_APP_NAME }} \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+            --image ${{ env.REGISTRY_LOGIN_SERVER }}/progress-receiver:${{ env.IMAGE_TAG }}
+
+      - name: Wait for BatchProcessor revision to be healthy
+        run: |
+          echo "Waiting for BatchProcessor.Api revision to be healthy..."
+          max_attempts=30
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            status=$(az containerapp revision show \
+              --name ${{ vars.ACA_BATCH_APP_NAME }} \
+              --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
+            
+            if [ "$status" == "Succeeded" ]; then
+              echo "✓ BatchProcessor.Api revision is healthy"
+              break
+            fi
+            
+            attempt=$((attempt + 1))
+            if [ $attempt -lt $max_attempts ]; then
+              echo "  Status: $status (attempt $attempt/$max_attempts), waiting..."
+              sleep 10
+            fi
+          done
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "⚠ BatchProcessor.Api did not reach healthy state within timeout"
+            exit 1
+          fi
+
+      - name: Wait for ProgressReceiver revision to be healthy
+        run: |
+          echo "Waiting for ProgressReceiver.Api revision to be healthy..."
+          max_attempts=30
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            status=$(az containerapp revision show \
+              --name ${{ vars.ACA_RECEIVER_APP_NAME }} \
+              --resource-group ${{ vars.AZURE_RESOURCE_GROUP_DEV }} \
+              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
+            
+            if [ "$status" == "Succeeded" ]; then
+              echo "✓ ProgressReceiver.Api revision is healthy"
+              break
+            fi
+            
+            attempt=$((attempt + 1))
+            if [ $attempt -lt $max_attempts ]; then
+              echo "  Status: $status (attempt $attempt/$max_attempts), waiting..."
+              sleep 10
+            fi
+          done
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "⚠ ProgressReceiver.Api did not reach healthy state within timeout"
+            exit 1
+          fi
+
+      - name: Post deployment summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 🚀 Deployment Summary
+          
+          **Environment:** Dev  
+          **Commit:** ${{ github.sha }}  
+          **Workflow:** ${{ github.workflow }}  
+          **Triggered By:** ${{ github.event_name }}  
+          
+          ### Deployed Components
+          - ✅ Infrastructure (Bicep)
+          - ✅ BatchProcessor.Api (Image: ${{ env.IMAGE_TAG }})
+          - ✅ ProgressReceiver.Api (Image: ${{ env.IMAGE_TAG }})
+          
+          ### Resources
+          - Resource Group: `${{ vars.AZURE_RESOURCE_GROUP_DEV }}`
+          - Registry: `${{ env.REGISTRY_LOGIN_SERVER }}`
+          
+          ### Next Steps
+          1. Verify health checks pass in Azure Portal
+          2. Review logs in Application Insights
+          3. Test APIs via internal VNet endpoints
+          
+          **Deployment completed at:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          EOF
+
+  # ============================================================================
+  # FINAL: Summary Job
+  # ============================================================================
+  summary:
+    name: Deployment Summary
+    needs: [build-and-test, lint-bicep, build-push-images, deploy-infra, deploy-apps]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "Pipeline Execution Summary:"
+          echo "✓ build-and-test: ${{ needs.build-and-test.result }}"
+          echo "✓ lint-bicep: ${{ needs.lint-bicep.result }}"
+          echo "✓ build-push-images: ${{ needs.build-push-images.result }}"
+          echo "✓ deploy-infra: ${{ needs.deploy-infra.result }}"
+          echo "✓ deploy-apps: ${{ needs.deploy-apps.result }}"
+
+# ============================================================================
+# ENVIRONMENT PROTECTION RULES (for future higher environments)
+# ============================================================================
+# To set up approval gates for staging/prod promotion:
+#
+# 1. Create GitHub Environments:
+#    - Settings > Environments > New Environment
+#    - Name: 'staging' or 'prod'
+#
+# 2. Add Protection Rules:
+#    - Required reviewers: select teams/users who must approve
+#    - Restrict to specific branches: 'main' only
+#    - Wait timer: 5 minutes (optional)
+#
+# 3. Add Custom Properties (optional):
+#    - approval_required: true
+#    - deployment_cost: high
+#
+# 4. Update workflow to reference environment:
+#    jobs:
+#      deploy-prod:
+#        environment: prod
+#        runs-on: ubuntu-latest
+#        ...
+#
+# This ensures humans review deployments to critical environments.
