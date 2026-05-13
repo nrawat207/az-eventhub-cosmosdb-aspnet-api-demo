@@ -34,23 +34,35 @@ public class EventHubConsumerService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var eventHubName = GetRequiredConfigurationValue("EventHub:Name");
-        var fullyQualifiedNamespace = GetRequiredConfigurationValue("EventHub:NamespaceFQDN");
+        var connectionString = GetOptionalConfigurationValue("ConnectionStrings:EventHub")
+            ?? GetOptionalConfigurationValue("EventHub:ConnectionString");
         var checkpointStore = CreateCheckpointStore();
+        await checkpointStore.CreateIfNotExistsAsync(cancellationToken: stoppingToken);
 
-        _processorClient = new EventProcessorClient(
-            checkpointStore,
-            EventHubConsumerClient.DefaultConsumerGroupName,
-            fullyQualifiedNamespace,
-            eventHubName,
-            _credential);
+        if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            _processorClient = new EventProcessorClient(
+                checkpointStore,
+                EventHubConsumerClient.DefaultConsumerGroupName,
+                connectionString,
+                eventHubName);
+        }
+        else
+        {
+            var fullyQualifiedNamespace = GetRequiredConfigurationValue("EventHub:NamespaceFQDN");
+
+            _processorClient = new EventProcessorClient(
+                checkpointStore,
+                EventHubConsumerClient.DefaultConsumerGroupName,
+                fullyQualifiedNamespace,
+                eventHubName,
+                _credential);
+        }
 
         _processorClient.ProcessEventAsync += OnProcessEventAsync;
         _processorClient.ProcessErrorAsync += OnProcessErrorAsync;
 
-        _logger.LogInformation(
-            "Starting EventHub processor for {EventHubName} in namespace {EventHubNamespace}.",
-            eventHubName,
-            fullyQualifiedNamespace);
+        _logger.LogInformation("Starting EventHub processor for {EventHubName}.", eventHubName);
 
         try
         {
@@ -143,6 +155,13 @@ public class EventHubConsumerService : BackgroundService
 
     private BlobContainerClient CreateCheckpointStore()
     {
+        var storageConnectionString = GetOptionalConfigurationValue("Storage:ConnectionString");
+
+        if (!string.IsNullOrWhiteSpace(storageConnectionString))
+        {
+            return new BlobContainerClient(storageConnectionString, CheckpointContainerName);
+        }
+
         var containerUri = GetOptionalConfigurationValue("Storage:CheckpointContainerUri");
 
         if (string.IsNullOrWhiteSpace(containerUri))

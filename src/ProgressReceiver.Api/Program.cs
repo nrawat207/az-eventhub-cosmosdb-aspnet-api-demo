@@ -29,10 +29,25 @@ builder.Services.AddAzureClients(clientBuilder =>
 {
     var accountEndpoint = GetRequiredConfigurationValue("CosmosDb:AccountEndpoint");
     var accountKey = GetOptionalConfigurationValue("CosmosDb:AccountKey");
+    var allowInvalidServerCertificate = builder.Configuration.GetValue<bool>("CosmosDb:AllowInvalidServerCertificate");
 
     clientBuilder.AddClient<CosmosClient, CosmosClientOptions>((options, credential, _) =>
     {
         options.ConnectionMode = ConnectionMode.Gateway;
+
+        if (allowInvalidServerCertificate)
+        {
+            options.HttpClientFactory = () =>
+            {
+                var handler = new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback =
+                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                };
+
+                return new HttpClient(handler, disposeHandler: true);
+            };
+        }
 
         return !string.IsNullOrWhiteSpace(accountKey)
             ? new CosmosClient(accountEndpoint, accountKey, options)
@@ -63,6 +78,11 @@ app.UseExceptionHandler(exceptionHandlerApp =>
 
 app.MapControllers();
 
+if (builder.Configuration.GetValue<bool>("CosmosDb:CreateDatabaseAndContainer"))
+{
+    await InitializeCosmosDbAsync(app.Services, builder.Configuration);
+}
+
 app.Run();
 
 string GetRequiredConfigurationValue(string key)
@@ -79,6 +99,31 @@ string? GetOptionalConfigurationValue(string key)
     var value = builder.Configuration[key];
 
     return !string.IsNullOrWhiteSpace(value) ? value : null;
+}
+
+static async Task InitializeCosmosDbAsync(IServiceProvider services, IConfiguration configuration)
+{
+    using var scope = services.CreateScope();
+    var cosmosClient = scope.ServiceProvider.GetRequiredService<CosmosClient>();
+    var databaseName = GetRequired(configuration, "CosmosDb:DatabaseName");
+    var containerName = GetRequired(configuration, "CosmosDb:ContainerName");
+
+    var database = await cosmosClient.CreateDatabaseIfNotExistsAsync(databaseName);
+    if (database?.Database is null)
+    {
+        return;
+    }
+
+    await database.Database.CreateContainerIfNotExistsAsync(containerName, "/jobId");
+
+    static string GetRequired(IConfiguration configuration, string key)
+    {
+        var value = configuration[key];
+
+        return !string.IsNullOrWhiteSpace(value)
+            ? value
+            : throw new InvalidOperationException($"{key} configuration is required.");
+    }
 }
 
 public partial class Program;

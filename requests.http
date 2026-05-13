@@ -1,0 +1,21 @@
+@batchApi = http://localhost:5001
+@progressApi = http://localhost:5002
+@jobId = replace-with-job-id
+
+### Start batch job
+POST {{batchApi}}/api/batch/start
+Content-Type: application/json
+
+{
+  "jobName": "local-demo",
+  "totalItems": 10
+}
+
+### Get batch job status from BatchProcessor.Api
+GET {{batchApi}}/api/batch/{{jobId}}/status
+
+### Get persisted job from ProgressReceiver.Api
+GET {{progressApi}}/api/jobs/{{jobId}}
+
+### Get all jobs from ProgressReceiver.Api
+GET {{progressApi}}/api/jobs
