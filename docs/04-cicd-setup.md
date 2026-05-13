@@ -1,152 +1,65 @@
 # CI/CD Setup Guide
 
-This document walks through configuring GitHub Actions (or Azure DevOps) to automatically build, test, and deploy the application whenever code is pushed.
+This project uses **Azure DevOps Pipelines** for CI/CD automation. For detailed setup instructions, see [06 - Azure DevOps Setup](06-azure-devops-setup.md).
 
 ## Overview
 
-The CI/CD pipeline (GitHub Actions) has these stages:
+The CI/CD pipeline has these stages:
 
 1. **Build & Test** — Run on all PRs and pushes
 2. **Lint Bicep** — Validate infrastructure code
-3. **Build & Push Images** — Create Docker images, push to Container Registry
-4. **Deploy Infrastructure** — Run Bicep deployment
-5. **Deploy Applications** — Update ACA apps with new images
+3. **Build & Push Images** — Create Docker images, push to Container Registry (main branch only)
+4. **Deploy Infrastructure** — Run Bicep deployment (main branch only)
+5. **Deploy Applications** — Update ACA apps with new images (main branch only)
 
-## GitHub Actions Setup
+## Azure DevOps Setup
 
-### 1. Prerequisites
+For comprehensive step-by-step instructions on setting up Azure DevOps Pipelines, see [Azure DevOps Setup Guide](06-azure-devops-setup.md).
 
-- GitHub repository (public or private)
-- Azure subscription with Contributor access
-- GitHub account with admin access to the repo
+### Quick Summary
 
-### 2. Configure OIDC Federation (Recommended — No Secrets)
+1. Create **Service Connection** (Workload Identity Federation recommended)
+2. Create **Variable Group** in Pipeline Library with required variables
+3. Link variable group to pipeline
+4. Create **Docker Registry Service Connection** for ACR
+5. Configure **Pull Request validation** (optional)
+6. Run pipeline manually to verify setup
 
-GitHub Actions can authenticate to Azure without storing credentials using OpenID Connect (OIDC).
+The pipeline file `azure-pipelines.yml` is already configured and ready to use.
 
-```bash
-# Set variables
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-RESOURCE_GROUP="rg-eventhub-cosmosdb-dev"
-LOCATION="eastus"
+## Pipeline Triggers
 
-# Create Entra ID app registration for GitHub Actions
-APP_ID=$(az ad app create \
-  --display-name "github-actions-oidc" \
-  --query appId -o tsv)
+| Trigger | Stages |
+|---------|--------|
+| **Push to main** | Build → Lint → Build Images → Deploy Infra → Deploy Apps |
+| **Pull Request to main** | Build → Lint only (no deployment) |
+| **Manual trigger** | Full pipeline on-demand |
 
-# Create service principal
-OBJECT_ID=$(az ad sp create --id $APP_ID --query id -o tsv)
+## Monitoring Pipeline Runs
 
-# Add federated credential for GitHub
-az ad app federated-credential create \
-  --id $APP_ID \
-  --parameters '{
-    "name": "github-actions-federated",
-    "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:YOUR_GITHUB_ORG/az-eventhub-cosmosdb-aspnet-api-demo:ref:refs/heads/main",
-    "audiences": ["api://AzureADTokenExchange"]
-  }'
+### Azure DevOps Portal
 
-# Assign Contributor role
-az role assignment create \
-  --assignee-object-id $OBJECT_ID \
-  --role "Contributor" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID"
+1. Go to **Pipelines → Runs**
+2. Click on a run to view details
+3. **Logs** tab shows each job's execution
+4. **Tests** tab shows test results and coverage
+5. **Artifacts** tab contains published reports
 
-# Assign Container Registry push role
-az role assignment create \
-  --assignee-object-id $OBJECT_ID \
-  --role "AcrPush" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP"
-
-# Note these values for GitHub Secrets
-echo "AZURE_CLIENT_ID: $APP_ID"
-echo "AZURE_TENANT_ID: $(az account show --query tenantId -o tsv)"
-echo "AZURE_SUBSCRIPTION_ID: $SUBSCRIPTION_ID"
-```
-
-### 3. Add GitHub Secrets & Variables
-
-Navigate to GitHub repo → **Settings → Secrets and variables → Actions**
-
-**Environment Variables** (no sensitive data):
-- `AZURE_RESOURCE_GROUP`: `rg-eventhub-cosmosdb-dev`
-- `ACR_NAME`: `azlearnacrdev` (from deployment output)
-- `ACA_BATCH_APP_NAME`: `batch-processor-api`
-- `ACA_RECEIVER_APP_NAME`: `progress-receiver-api`
-
-**OIDC Credentials** (from above):
-- `AZURE_CLIENT_ID`: Application ID from Entra ID
-- `AZURE_TENANT_ID`: Your Azure tenant ID
-- `AZURE_SUBSCRIPTION_ID`: Your subscription ID
-
-### 4. Configure GitHub Environments (Optional)
-
-For manual approval before deploy to production:
-
-1. Go to **Settings → Environments**
-2. Create new environment: `production`
-3. Add required reviewers
-4. Add secret overrides for prod (e.g., different resource group)
-
-## Pipeline File
-
-The `.github/workflows/ci-cd-dev.yml` file (auto-generated) contains:
-
-### Trigger Conditions
-
-```yaml
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:  # Manual trigger
-```
-
-### Jobs
-
-```yaml
-jobs:
-  build-test:
-    # Build, test, upload coverage
-    
-  lint-bicep:
-    # Validate all Bicep files
-    
-  build-push-images:
-    # Build Docker images, push to ACR
-    needs: [build-test]
-    if: github.ref == 'refs/heads/main'
-    
-  deploy-infra:
-    # Run Bicep deployment
-    needs: [lint-bicep]
-    if: github.ref == 'refs/heads/main'
-    
-  deploy-apps:
-    # Update ACA apps with new images
-    needs: [deploy-infra, build-push-images]
-    if: github.ref == 'refs/heads/main'
-```
-
-## Manual Workflow Dispatch
-
-Trigger pipeline without a commit:
+### Sample Commands
 
 ```bash
-gh workflow run ci-cd-dev.yml -f environment=dev
+# View recent pipeline runs
+az pipelines runs list \
+  --project "YourProjectName" \
+  --pipeline-name "ci-cd-dev" \
+  --top 10
+
+# View logs from latest run
+az pipelines runs show \
+  --project "YourProjectName" \
+  --id <run-id> \
+  --open
 ```
-
-## Monitoring Deployments
-
-### GitHub Actions UI
-
-1. Go to **Actions** tab in your GitHub repo
-2. Click the latest workflow run
-3. Expand each job to view logs
-4. Check for failures and detailed error messages
 
 ### Azure Portal
 
@@ -162,22 +75,32 @@ az deployment group list \
 
 ## Troubleshooting
 
+### Service Connection Not Found
+
+**Error**: `Service connection not found`
+
+**Solution**:
+- Verify service connection name in variable group matches `AZURE_DEVOPS_SERVICE_CONNECTION`
+- Check pipeline has permission to use the service connection
+- Go to Library → Variable Groups → Pipeline permissions
+
 ### OIDC Authentication Fails
 
 **Error**: `AADSTS700016: Application ... not found in directory`
 
 **Solution**:
-- Verify `AZURE_CLIENT_ID` matches the app registration
-- Check federated credential subject matches your repo path
-- Ensure principal has required roles assigned
+- Verify `AZURE_CLIENT_ID` matches the service principal
+- Check federated credential issuer is correct
+- Ensure service principal has Contributor role on subscription
 
-### Image Push Fails
+### Docker Build Fails
 
 **Error**: `unauthorized: authentication required`
 
 **Solution**:
 ```bash
-# Verify ACR permissions
+# Verify Docker Registry service connection
+# Check ACR exists and service principal has AcrPush role
 az role assignment list \
   --assignee $AZURE_CLIENT_ID \
   --query "[?contains(roleDefinitionName, 'Acr')].roleDefinitionName" -o table
@@ -188,45 +111,9 @@ az role assignment list \
 **Error**: `InvalidRequest: Image pull failed`
 
 **Solution**:
-- Verify image was pushed to ACR: `az acr repository list -n $ACR_NAME`
+- Verify image was pushed to ACR: `az acr repository list -n azlearnacrdev`
 - Check ACA managed identity has `AcrPull` role on ACR
-- Ensure ACA environment is on same VNet as ACR (if private)
-
-## Azure DevOps Alternative
-
-If using Azure DevOps instead of GitHub Actions:
-
-The `azure-pipelines.yml` file (in root) provides equivalent CI/CD pipeline.
-
-### Setup
-
-1. Create Azure DevOps project
-2. Create pipeline from `azure-pipelines.yml`
-3. Configure service connection using OIDC (similar to above)
-4. Set pipeline variables (same as GitHub secrets)
-
-### Syntax
-
-```yaml
-trigger:
-  - main
-
-pool:
-  vmImage: 'ubuntu-latest'
-
-stages:
-  - stage: Build
-    jobs:
-      - job: BuildTest
-        # Same build and test steps
-        
-  - stage: Deploy
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - deployment: Infrastructure
-        # Bicep deployment
-```
+- Ensure ACA is on the same VNet if using private endpoints
 
 ## Next Steps
 

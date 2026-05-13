@@ -6,7 +6,7 @@ A complete end-to-end learning project demonstrating how to build scalable, even
 - **Azure CosmosDB** — NoSQL data persistence
 - **Azure Key Vault** — secrets management
 - **Bicep IaC** — infrastructure as code
-- **GitHub Actions** — CI/CD automation
+- **Azure DevOps Pipelines** — CI/CD automation
 
 ## Quick Start
 
@@ -37,7 +37,7 @@ Two ASP.NET Core APIs communicate via Azure EventHub:
 1. **BatchProcessor.Api** — Accepts batch jobs, publishes progress events to EventHub
 2. **ProgressReceiver.Api** — Consumes events, persists batch state to CosmosDB
 
-All infrastructure is provisioned via Bicep with automated deployment via GitHub Actions.
+All infrastructure is provisioned via Bicep with automated deployment via Azure DevOps Pipelines.
 
 ## Documentation
 
@@ -48,6 +48,7 @@ See `/docs` for detailed guides:
 - [03 - Infrastructure Deployment](docs/03-infra-deployment.md)
 - [04 - CI/CD Setup](docs/04-cicd-setup.md)
 - [05 - Architecture Deep Dive](docs/05-architecture.md)
+- [06 - Azure DevOps Setup](docs/06-azure-devops-setup.md)
 
 ## Prerequisites
 
