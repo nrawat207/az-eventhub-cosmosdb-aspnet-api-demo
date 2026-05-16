@@ -54,7 +54,7 @@ This is a learning project demonstrating a complete, production-grade Azure Even
 - **ASP.NET Core** — Web API framework
 - **Azure Managed Identity** — Zero-secret authentication
 - **Bicep** — Infrastructure as code language
-- **GitHub Actions** — CI/CD automation (Azure DevOps alternative available)
+- **Azure DevOps Pipelines** — CI/CD automation
 - **Docker** — Container runtime
 - **xUnit** — Testing framework
 
@@ -68,7 +68,7 @@ After completing this project, you will understand:
 ✅ Managed Identity authentication and authorization  
 ✅ Bicep modular infrastructure patterns  
 ✅ Private VNets with private endpoints  
-✅ CI/CD with GitHub Actions  
+✅ CI/CD with Azure DevOps Pipelines  
 ✅ Container Apps networking and scaling  
 ✅ .NET best practices for cloud applications  
 

@@ -106,18 +106,15 @@ dotnet build
 dotnet test
 ```
 
-### 5. (Optional) Configure GitHub for CI/CD
+### 5. (Optional) Configure Azure DevOps for CI/CD
 
-If using GitHub Actions:
+For Azure DevOps pipeline setup, see [CI/CD Setup Guide](04-cicd-setup.md)
 
 ```bash
-# Log in to GitHub CLI
-gh auth login
+# Log in to Azure DevOps CLI
+az devops configure --defaults organization=<your-org> project=<your-project>
 
-# Create repository (if not already done)
-gh repo create az-eventhub-cosmosdb-aspnet-api-demo --public
-
-# Configure OIDC for GitHub Actions (see docs/04-cicd-setup.md)
+# Configure service connection and pipeline (see docs/04-cicd-setup.md)
 ```
 
 ## Verify Your Environment
