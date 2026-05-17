@@ -3,14 +3,16 @@ param location string = resourceGroup().location
 param prefix string = 'azlearn'
 param batchProcessorImage string = '${toLower(prefix)}acr${environment}.azurecr.io/batchprocessor-api:dev'
 param progressReceiverImage string = '${toLower(prefix)}acr${environment}.azurecr.io/progressreceiver-api:dev'
+param batchProcessorAppName string = ''
+param progressReceiverAppName string = ''
 param cpuCores string = '0.5'
 param memoryGi string = '1Gi'
 param minReplicas int = 1
 param maxReplicas int = 3
 param deployContainerApps bool = true
 
-var batchProcessorAppName = '${prefix}-batchprocessor-${environment}'
-var progressReceiverAppName = '${prefix}-progressreceiver-${environment}'
+var computedBatchProcessorAppName = empty(batchProcessorAppName) ? '${prefix}-batchprocessor-${environment}' : batchProcessorAppName
+var computedProgressReceiverAppName = empty(progressReceiverAppName) ? '${prefix}-progressreceiver-${environment}' : progressReceiverAppName
 var databaseName = 'BatchJobsDB'
 var containerName = 'BatchJobs'
 
@@ -147,7 +149,7 @@ module batchProcessorApp 'modules/containerapp.bicep' = if (deployContainerApps)
   name: 'batch-processor-container-app'
   params: {
     location: location
-    appName: batchProcessorAppName
+    appName: computedBatchProcessorAppName
     image: batchProcessorImage
     environmentId: acaEnvironment.outputs.environmentId
     identityId: batchProcessorIdentity.id
@@ -164,7 +166,7 @@ module progressReceiverApp 'modules/containerapp.bicep' = if (deployContainerApp
   name: 'progress-receiver-container-app'
   params: {
     location: location
-    appName: progressReceiverAppName
+    appName: computedProgressReceiverAppName
     image: progressReceiverImage
     environmentId: acaEnvironment.outputs.environmentId
     identityId: progressReceiverIdentity.id

@@ -187,7 +187,7 @@ stages:
                 $(IMAGE_TAG_LATEST)
               containerRegistry: '$(ACR_DOCKER_REGISTRY_SERVICE_CONNECTION)'
               buildContext: '$(Build.Repository.LocalPath)'
-              addPipelineData: true
+              addPipelineData: true 
 
           - task: Docker@2
             displayName: 'Build and push ProgressReceiver.Api'

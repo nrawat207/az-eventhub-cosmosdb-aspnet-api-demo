@@ -59,7 +59,7 @@ See `/docs` for detailed guides:
 - VS Code (recommended with C#, Bicep, and Docker extensions)
 
 ## Project Structure
-
+--test
 ```
 az-eventhub-cosmosdb-aspnet-api-demo/
 ├── src/
