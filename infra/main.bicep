@@ -7,6 +7,7 @@ param cpuCores string = '0.5'
 param memoryGi string = '1Gi'
 param minReplicas int = 1
 param maxReplicas int = 3
+param deployContainerApps bool = true
 
 var batchProcessorAppName = '${prefix}-batchprocessor-${environment}'
 var progressReceiverAppName = '${prefix}-progressreceiver-${environment}'
@@ -142,7 +143,7 @@ var commonEnvVars = [
   }
 ]
 
-module batchProcessorApp 'modules/containerapp.bicep' = {
+module batchProcessorApp 'modules/containerapp.bicep' = if (deployContainerApps) {
   name: 'batch-processor-container-app'
   params: {
     location: location
@@ -159,7 +160,7 @@ module batchProcessorApp 'modules/containerapp.bicep' = {
   }
 }
 
-module progressReceiverApp 'modules/containerapp.bicep' = {
+module progressReceiverApp 'modules/containerapp.bicep' = if (deployContainerApps) {
   name: 'progress-receiver-container-app'
   params: {
     location: location
@@ -201,9 +202,10 @@ output containerRegistryName string = containerRegistry.outputs.registryName
 output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
 output batchProcessorIdentityId string = batchProcessorIdentity.id
 output progressReceiverIdentityId string = progressReceiverIdentity.id
-output batchProcessorContainerAppId string = batchProcessorApp.outputs.containerAppId
-output progressReceiverContainerAppId string = progressReceiverApp.outputs.containerAppId
+output batchProcessorContainerAppId string = deployContainerApps ? batchProcessorApp.outputs.containerAppId : ''
+output progressReceiverContainerAppId string = deployContainerApps ? progressReceiverApp.outputs.containerAppId : ''
 output keyVaultUri string = keyVault.outputs.keyVaultUri
+output keyVaultName string = keyVault.outputs.keyVaultName
 output eventHubNamespaceFqdn string = eventHub.outputs.namespaceFqdn
 output cosmosDbEndpoint string = cosmosDb.outputs.accountEndpoint
 output checkpointContainerUri string = storage.outputs.checkpointContainerUri

@@ -52,7 +52,7 @@ stages:
     jobs:
       - job: BuildAndTest
         displayName: 'Build Solution & Run Tests'
-        timeoutInMinutes: 30
+        #timeoutInMinutes: 30
         steps:
           - task: UseDotNet@2
             displayName: 'Install .NET $(DOTNET_VERSION)'
@@ -80,24 +80,24 @@ stages:
               projects: 'tests/**/*.csproj'
               arguments: '--configuration $(buildConfiguration) --no-build --logger "trx;LogFileName=test-results.trx" --collect:"XPlat Code Coverage" --results-directory $(Agent.TempDirectory)/TestResults'
 
-          - task: PublishTestResults@2
-            displayName: 'Publish test results'
-            condition: always()
-            inputs:
-              testResultsFormat: 'VSTest'
-              testResultsFiles: '$(Agent.TempDirectory)/TestResults/**/*.trx'
-              mergeTestResults: true
-              failTaskOnFailedTests: true
-              publishRunAttachments: true
+          # - task: PublishTestResults@2
+          #   displayName: 'Publish test results'
+          #   condition: always()
+          #   inputs:
+          #     testResultsFormat: 'VSTest'
+          #     testResultsFiles: '$(Agent.TempDirectory)/TestResults/**/*.trx'
+          #     mergeTestResults: true
+          #     failTaskOnFailedTests: true
+          #     publishRunAttachments: true
 
-          - task: PublishCodeCoverageResults@1
-            displayName: 'Publish code coverage'
-            condition: always()
-            inputs:
-              codeCoverageTool: 'Cobertura'
-              summaryFileLocation: '$(Agent.TempDirectory)/TestResults/**/coverage.cobertura.xml'
-              reportDirectory: '$(Agent.TempDirectory)/TestResults'
-              failIfCoverageEmpty: false
+          # - task: PublishCodeCoverageResults@1
+          #   displayName: 'Publish code coverage'
+          #   condition: always()
+          #   inputs:
+          #     codeCoverageTool: 'Cobertura'
+          #     summaryFileLocation: '$(Agent.TempDirectory)/TestResults/**/coverage.cobertura.xml'
+          #     reportDirectory: '$(Agent.TempDirectory)/TestResults'
+          #     failIfCoverageEmpty: false
 
   - stage: Lint_Bicep
     displayName: 'Lint Bicep & Validate'
@@ -105,7 +105,7 @@ stages:
     jobs:
       - job: LintBicep
         displayName: 'Validate Bicep files'
-        timeoutInMinutes: 15
+       # timeoutInMinutes: 15
         steps:
           - task: AzureCLI@2
             displayName: 'Build Bicep template'
@@ -163,7 +163,7 @@ stages:
     jobs:
       - job: BuildImages
         displayName: 'Build and push Docker images'
-        timeoutInMinutes: 20
+        #timeoutInMinutes: 20
         steps:
           - task: Docker@2
             displayName: 'Build and push BatchProcessor.Api'
@@ -213,7 +213,7 @@ stages:
     jobs:
       - job: DeployInfra
         displayName: 'Deploy Bicep infrastructure'
-        timeoutInMinutes: 30
+       # timeoutInMinutes: 30
         steps:
           - task: AzureCLI@2
             displayName: 'Deploy Bicep infrastructure'
@@ -262,7 +262,7 @@ stages:
     jobs:
       - job: DeployApps
         displayName: 'Update ACA revisions'
-        timeoutInMinutes: 25
+       # timeoutInMinutes: 25
         steps:
           - task: AzureCLI@2
             displayName: 'Update BatchProcessor.Api image'

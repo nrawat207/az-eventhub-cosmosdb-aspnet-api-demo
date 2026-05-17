@@ -10,8 +10,7 @@ RUN dotnet restore "src/BatchProcessor.Api/BatchProcessor.Api.csproj"
 COPY . .
 RUN dotnet publish "src/BatchProcessor.Api/BatchProcessor.Api.csproj" \
     --configuration Release \
-    --output /app/publish \
-    --no-restore
+    --output /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app

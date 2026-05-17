@@ -8,3 +8,4 @@ param cpuCores = '0.5'
 param memoryGi = '1Gi'
 param minReplicas = 1
 param maxReplicas = 3
+param deployContainerApps = true

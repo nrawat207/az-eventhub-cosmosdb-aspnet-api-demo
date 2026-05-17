@@ -58,10 +58,12 @@ print_section() {
 
 # Default values
 ENVIRONMENT="dev"
-RESOURCE_GROUP_NAME=""
-LOCATION="eastus"
+RESOURCE_GROUP_NAME="rg-eventhub-cosmosdb-dev"
+LOCATION="centralindia"
+PREFIX="azlearn" 
 TEMPLATE_FILE="$PROJECT_ROOT/infra/main.bicep"
 PARAMETERS_FILE="$PROJECT_ROOT/infra/parameters/${ENVIRONMENT}.bicepparam"
+DEPLOY_CONTAINER_APPS="true"
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -155,12 +157,37 @@ fi
 print_section "Step 4: Deploying Infrastructure (this may take 10-15 minutes)"
 DEPLOYMENT_NAME="azlearn-deploy-$(date +%s)"
 
+# Check if this might be first-time setup by checking if ACR exists and has images
+FIRST_TIME_SETUP=false
+if ! az acr exists --name "${PREFIX}acr${ENVIRONMENT}" --resource-group "$RESOURCE_GROUP_NAME" > /dev/null 2>&1; then
+    FIRST_TIME_SETUP=true
+fi
+
+# If first-time setup, ask about deploying container apps
+if [[ "$FIRST_TIME_SETUP" == "true" ]]; then
+    print_info "First-time setup detected: Container images don't exist in ACR yet"
+    print_info ""
+    print_info "You have two options:"
+    print_info "1. Deploy infrastructure ONLY (without container apps) - Recommended for first-time setup"
+    print_info "2. Deploy infrastructure WITH container apps (requires images to already exist in ACR)"
+    print_info ""
+    read -p "Deploy container apps now? (y/n, default: n): " -r DEPLOY_APPS_RESPONSE
+    if [[ "$DEPLOY_APPS_RESPONSE" =~ ^[Yy]$ ]]; then
+        DEPLOY_CONTAINER_APPS="true"
+        print_info "Container apps WILL be deployed"
+    else
+        DEPLOY_CONTAINER_APPS="false"
+        print_info "Container apps will be SKIPPED (you can deploy them later after building/pushing images)"
+    fi
+fi
+
 # Deploy and capture output
 DEPLOYMENT_OUTPUT=$(az deployment group create \
     --name "$DEPLOYMENT_NAME" \
     --resource-group "$RESOURCE_GROUP_NAME" \
     --template-file "$TEMPLATE_FILE" \
     --parameters "$PARAMETERS_FILE" \
+    --parameters deployContainerApps="$DEPLOY_CONTAINER_APPS" \
     --output json)
 
 if [[ $? -eq 0 ]]; then
@@ -250,28 +277,58 @@ Key Azure Resources:
   Application Insights:     [Configured]
 
 Next Steps:
+EOF
+
+# Show different instructions based on whether we deployed container apps
+if [[ "$DEPLOY_CONTAINER_APPS" == "true" ]]; then
+    cat << EOF
+  Container apps are already deployed and running!
+  
+  To update container apps with new images:
+    1. Build and push new Docker images to ACR
+    2. Restart the container apps to pick up the new images:
+       az containerapp update --name azlearn-batchprocessor-$ENVIRONMENT \
+         --resource-group $RESOURCE_GROUP_NAME --image $ACR_NAME.azurecr.io/batchprocessor-api:dev
+       az containerapp update --name azlearn-progressreceiver-$ENVIRONMENT \
+         --resource-group $RESOURCE_GROUP_NAME --image $ACR_NAME.azurecr.io/progressreceiver-api:dev
+
+EOF
+else
+    cat << EOF
+  Container apps were SKIPPED. To deploy them later:
+  
   1. Build Docker images:
-     docker build -t $ACR_NAME.azurecr.io/batch-processor:dev src/BatchProcessor.Api
-     docker build -t $ACR_NAME.azurecr.io/progress-receiver:dev src/ProgressReceiver.Api
+     cd $PROJECT_ROOT
+     docker build -t $ACR_NAME.azurecr.io/batchprocessor-api:dev src/BatchProcessor.Api
+     docker build -t $ACR_NAME.azurecr.io/progressreceiver-api:dev src/ProgressReceiver.Api
 
-  2. Push to ACR:
+  2. Log in to ACR and push images:
      az acr login --name $ACR_NAME
-     docker push $ACR_NAME.azurecr.io/batch-processor:dev
-     docker push $ACR_NAME.azurecr.io/progress-receiver:dev
+     docker push $ACR_NAME.azurecr.io/batchprocessor-api:dev
+     docker push $ACR_NAME.azurecr.io/progressreceiver-api:dev
 
-  3. Deploy container apps:
-     az containerapp update --name batch-processor-api --resource-group $RESOURCE_GROUP_NAME \
-       --image $ACR_NAME.azurecr.io/batch-processor:dev
-     az containerapp update --name progress-receiver-api --resource-group $RESOURCE_GROUP_NAME \
-       --image $ACR_NAME.azurecr.io/progress-receiver:dev
+  3. Deploy container apps (run with deployContainerApps=true):
+     az deployment group create \\
+       --name "azlearn-deploy-apps-$(date +%s)" \\
+       --resource-group $RESOURCE_GROUP_NAME \\
+       --template-file $TEMPLATE_FILE \\
+       --parameters $PARAMETERS_FILE \\
+       --parameters deployContainerApps=true
 
-  4. View logs:
-     az monitor log-analytics query --workspace $(az resource list -g $RESOURCE_GROUP_NAME \
-       --query "[?type=='Microsoft.OperationalInsights/workspaces'].name" -o tsv | head -1) \
-       --analytics-query "AppTraces | take 100"
+  4. Or use the provided build-and-push script for CI/CD:
+     bash $SCRIPT_DIR/build-and-push.sh --environment $ENVIRONMENT --acr-name $ACR_NAME
 
-  5. Clean up (when done):
-     az group delete --name $RESOURCE_GROUP_NAME
+EOF
+fi
+
+cat << EOF
+  View application logs:
+    az monitor log-analytics query --workspace \$(az resource list -g $RESOURCE_GROUP_NAME \\
+      --query "[?type=='Microsoft.OperationalInsights/workspaces'].name" -o tsv | head -1) \\
+      --analytics-query "AppTraces | take 100"
+
+  Clean up (when done):
+    az group delete --name $RESOURCE_GROUP_NAME
 
 EOF
 

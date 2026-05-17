@@ -17,16 +17,30 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
       family: 'A'
       name: 'standard'
     }
-    enableRbacAuthorization: true
+    enableRbacAuthorization: false
+    accessPolicies: [
+      {
+        tenantId: tenantId
+        objectId: '8b69efde-961c-42e4-8baf-f1b4f0c275d3'
+        permissions: {
+          secrets: [
+            'get'
+            'list'
+            'set'
+            'delete'
+          ]
+        }
+      }
+    ]
     enabledForDeployment: false
     enabledForDiskEncryption: false
     enabledForTemplateDeployment: false
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
     enablePurgeProtection: true
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: 'Enabled'
     networkAcls: {
-      defaultAction: 'Deny'
+      defaultAction: 'Allow'
       bypass: 'AzureServices'
     }
   }

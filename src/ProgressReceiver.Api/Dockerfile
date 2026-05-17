@@ -10,8 +10,8 @@ RUN dotnet restore "src/ProgressReceiver.Api/ProgressReceiver.Api.csproj"
 COPY . .
 RUN dotnet publish "src/ProgressReceiver.Api/ProgressReceiver.Api.csproj" \
     --configuration Release \
-    --output /app/publish \
-    --no-restore
+    --output /app/publish 
+
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
