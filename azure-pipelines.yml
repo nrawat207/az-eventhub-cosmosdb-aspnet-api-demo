@@ -186,6 +186,7 @@ stages:
                 $(IMAGE_TAG_DEV)
                 $(IMAGE_TAG_LATEST)
               containerRegistry: '$(ACR_DOCKER_REGISTRY_SERVICE_CONNECTION)'
+              buildContext: '$(Build.Repository.LocalPath)'
               addPipelineData: true
 
           - task: Docker@2
@@ -199,6 +200,7 @@ stages:
                 $(IMAGE_TAG_DEV)
                 $(IMAGE_TAG_LATEST)
               containerRegistry: '$(ACR_DOCKER_REGISTRY_SERVICE_CONNECTION)'
+              buildContext: '$(Build.Repository.LocalPath)'
               addPipelineData: true
 
           - script: |
