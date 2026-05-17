@@ -180,7 +180,8 @@ stages:
             inputs:
               command: 'buildAndPush'
               Dockerfile: 'src/BatchProcessor.Api/Dockerfile'
-              repository: '$(REGISTRY_LOGIN_SERVER)/batchprocessor-api'
+              # REMOVED the $(REGISTRY_LOGIN_SERVER)/ prefix here:
+              repository: 'batchprocessor-api'
               tags: |
                 $(IMAGE_TAG)
                 $(IMAGE_TAG_DEV)
@@ -194,7 +195,8 @@ stages:
             inputs:
               command: 'buildAndPush'
               Dockerfile: 'src/ProgressReceiver.Api/Dockerfile'
-              repository: '$(REGISTRY_LOGIN_SERVER)/progressreceiver-api'
+              # REMOVED the $(REGISTRY_LOGIN_SERVER)/ prefix here:
+              repository: 'progressreceiver-api'
               tags: |
                 $(IMAGE_TAG)
                 $(IMAGE_TAG_DEV)
