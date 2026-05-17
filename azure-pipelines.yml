@@ -85,7 +85,10 @@ stages:
             inputs:
               command: 'test'
               projects: 'tests/**/*.csproj'
-              arguments: '--configuration $(buildConfiguration) --no-build --logger "trx;LogFileName=test-results.trx" --collect:"XPlat Code Coverage" --results-directory $(Agent.TempDirectory)/TestResults'
+              # 1. Removed --logger and --results-directory from here
+              arguments: '--configuration $(buildConfiguration) --no-build --collect:"XPlat Code Coverage"'
+              # 2. Let Azure DevOps natively handle and publish the TRX files
+              publishTestResults: true
 
           # - task: PublishTestResults@2
           #   displayName: 'Publish test results'
