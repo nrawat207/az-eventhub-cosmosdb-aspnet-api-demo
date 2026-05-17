@@ -232,30 +232,30 @@ if [[ "$APPINSIGHTS_CONNSTR" != "not-found" ]]; then
     print_success "Application Insights Connection String: [REDACTED]"
 fi
 
-# Step 6: Set Key Vault secrets
-print_section "Step 6: Populating Key Vault Secrets"
+# # Step 6: Set Key Vault secrets
+# print_section "Step 6: Populating Key Vault Secrets"
 
-# Check if setup-keyvault-secrets.sh exists
-if [[ ! -f "$SCRIPT_DIR/setup-keyvault-secrets.sh" ]]; then
-    print_error "setup-keyvault-secrets.sh not found at $SCRIPT_DIR/setup-keyvault-secrets.sh"
-    exit 1
-fi
+# # Check if setup-keyvault-secrets.sh exists
+# if [[ ! -f "$SCRIPT_DIR/setup-keyvault-secrets.sh" ]]; then
+#     print_error "setup-keyvault-secrets.sh not found at $SCRIPT_DIR/setup-keyvault-secrets.sh"
+#     exit 1
+# fi
 
-# Make it executable if not already
-chmod +x "$SCRIPT_DIR/setup-keyvault-secrets.sh"
+# # Make it executable if not already
+# chmod +x "$SCRIPT_DIR/setup-keyvault-secrets.sh"
 
-# Call setup-keyvault-secrets.sh with captured values
-if bash "$SCRIPT_DIR/setup-keyvault-secrets.sh" \
-    --resource-group "$RESOURCE_GROUP_NAME" \
-    --key-vault-name "$KEY_VAULT_NAME" \
-    --cosmos-endpoint "$COSMOS_ENDPOINT" \
-    --eventhub-fqdn "$EVENTHUB_FQDN" \
-    --appinsights-connection-string "$APPINSIGHTS_CONNSTR"; then
-    print_success "Key Vault secrets configured successfully"
-else
-    print_error "Failed to configure Key Vault secrets"
-    exit 1
-fi
+# # Call setup-keyvault-secrets.sh with captured values
+# if bash "$SCRIPT_DIR/setup-keyvault-secrets.sh" \
+#     --resource-group "$RESOURCE_GROUP_NAME" \
+#     --key-vault-name "$KEY_VAULT_NAME" \
+#     --cosmos-endpoint "$COSMOS_ENDPOINT" \
+#     --eventhub-fqdn "$EVENTHUB_FQDN" \
+#     --appinsights-connection-string "$APPINSIGHTS_CONNSTR"; then
+#     print_success "Key Vault secrets configured successfully"
+# else
+#     print_error "Failed to configure Key Vault secrets"
+#     exit 1
+# fi
 
 # Step 7: Print deployment summary
 print_section "Deployment Summary"

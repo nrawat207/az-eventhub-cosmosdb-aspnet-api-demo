@@ -37,14 +37,21 @@ pool:
   name: 'Azure Pipelines'
 
 variables:
-  DOTNET_VERSION: '10.0.x'
-  REGISTRY_LOGIN_SERVER: '$(ACR_NAME_DEV).azurecr.io'
-  ACR_DOCKER_REGISTRY_SERVICE_CONNECTION: 'ACRServiceConnection'
-  IMAGE_TAG: '$(Build.SourceVersion)'
-  IMAGE_TAG_DEV: 'dev'
-  IMAGE_TAG_LATEST: 'dev-latest'
-  buildConfiguration: 'Release'
-  ARTIFACT_STAGING: '$(Build.ArtifactStagingDirectory)'
+  - group: dev-pipeline-vars  # <-- This pulls in all variables from your Azure DevOps variable group
+  - name: DOTNET_VERSION
+    value: '10.0.x'
+  - name: REGISTRY_LOGIN_SERVER
+    value: '$(ACR_NAME_DEV).azurecr.io'
+  - name: IMAGE_TAG
+    value: '$(Build.SourceVersion)'
+  - name: IMAGE_TAG_DEV
+    value: 'dev'
+  - name: IMAGE_TAG_LATEST
+    value: 'dev-latest'
+  - name: buildConfiguration
+    value: 'Release'
+  - name: ARTIFACT_STAGING
+    value: '$(Build.ArtifactStagingDirectory)'
 
 stages:
   - stage: Build_And_Test

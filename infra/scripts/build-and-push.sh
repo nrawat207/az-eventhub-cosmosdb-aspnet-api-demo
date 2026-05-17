@@ -12,7 +12,7 @@
 #   - Access to the target ACR
 #
 # Usage:
-#   ./build-and-push.sh --environment dev --acr-name myacr
+#   ./build-and-push.sh --environment dev --environment dev --acr-name azlearnacrdev
 #   ./build-and-push.sh --environment prod --acr-name prodacr --image-tag latest
 #
 # Environment Variables:
@@ -196,7 +196,7 @@ Images in ACR:
 Next Steps:
   1. Deploy container apps (if not already deployed):
      az deployment group create \\
-       --name "azlearn-deploy-apps-\$(date +%s)" \\
+       --name "azlearn-deploy-apps-\\\$(date +%s)" \\
        --resource-group <resource-group-name> \\
        --template-file $PROJECT_ROOT/infra/main.bicep \\
        --parameters $PROJECT_ROOT/infra/parameters/$ENVIRONMENT.bicepparam \\
